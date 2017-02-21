@@ -6,6 +6,7 @@ using NDolls.Data.Attribute;
 using System.Reflection;
 using NDolls.Data.Entity;
 using NDolls.Core.Util;
+using System.Text.RegularExpressions;
 
 namespace NDolls.Data.Util
 {
@@ -157,6 +158,28 @@ namespace NDolls.Data.Util
                             fields.ValidateFields.Add(obj);
                         }
                     }
+
+                    //获取排序字段
+                    objs = info.GetCustomAttributes(typeof(OrderAttribute), false);
+                    if (objs != null && objs.Length > 0)
+                    {
+                        foreach (OrderAttribute obj in objs)
+                        {
+                            obj.FieldName = info.Name;//单独赋值(对应属性的变量名)
+                            fields.OrderFields.Add(obj);
+                        }
+                    }
+
+                    //获取用户自定义字段
+                    objs = info.GetCustomAttributes(typeof(CustomAttribute), false);
+                    if (objs != null && objs.Length > 0)
+                    {
+                        foreach (CustomAttribute obj in objs)
+                        {
+                            obj.FieldName = info.Name;//单独赋值(对应属性的变量名)
+                            fields.CustomFields.Add(obj);
+                        }
+                    }
                 }
 
                 Storage.ClassFieldsDic.Add(type, fields);
@@ -167,6 +190,43 @@ namespace NDolls.Data.Util
             }
 
             return fields;
+        }
+
+        /// <summary>
+        /// 将Model实体类对象转换为查询条件集合
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="model"></param>
+        /// <returns></returns>
+        public static List<Item> ModelToCondition<T>(T model)
+        {
+            List<Item> conditions = new List<Item>();
+
+            List<DataField> fields = EntityUtil.GetDataFields(model);
+            foreach (DataField field in fields)
+            {
+                if (field.FieldValue == null || field.FieldValue.ToString() == ""
+                    || field.FieldType.ToLower().Contains("date")
+                    || (field.FieldType.ToLower().Contains("uniqueidentifier") && field.FieldValue.ToString() == "00000000-0000-0000-0000-000000000000"))
+                    continue;
+
+                if (field.FieldType.ToLower().Contains("varchar"))
+                {
+                    conditions.Add(new ConditionItem(field.FieldName, field.FieldValue, SearchType.Fuzzy));
+                }
+                else if ("int,float,decimal,double,number".Contains(field.FieldType.ToLower()))
+                {
+                    continue;
+                    //if ((int)field.FieldValue > 0)
+                    //    conditions.Add(new ConditionItem(field.FieldName, field.FieldValue, SearchType.Lower));
+                }
+                else
+                {
+                    conditions.Add(new ConditionItem(field.FieldName, field.FieldValue, SearchType.Accurate));
+                }
+            }
+
+            return conditions;
         }
 
         /// <summary>
@@ -186,7 +246,7 @@ namespace NDolls.Data.Util
 
                 if (!item.Nullable && (fieldValue == null || fieldValue.ToString() == ""))
                 {
-                    return item.FieldName + "," + item.FieldDesc + Messages.NullableError;
+                    return item.FieldName + "," + item.FieldDesc + (item.FieldDesc == "" ? Messages.NullableError : "");
                 }
 
                 pattern = ValidateUtil.GetPattern(item.Expression);//尝试获取内置已存在正则表达式
@@ -204,12 +264,30 @@ namespace NDolls.Data.Util
         }
 
         /// <summary>
+        /// 获取程序集中静态属性值
+        /// </summary>
+        /// <param name="sysAssembley">系统程序集</param>
+        /// <param name="fieldName">静态变量名</param>
+        /// <returns>静态变量值</returns>
+        public static object GetValueByField(String sysAssembley, String fieldName)
+        {
+            Type type = Type.GetType(sysAssembley);
+            PropertyInfo info = type.GetProperty(fieldName);
+            if (info != null)
+            {
+                return info.GetValue(null, null);
+            }
+            else
+                return null;
+        }
+
+        /// <summary>
         /// 获取对象某属性的值
         /// </summary>
         /// <param name="entity">对象</param>
         /// <param name="fieldName">属性名</param>
         /// <returns>该对象属性对应的值</returns>
-        public static object GetValueByField(EntityBase entity, string fieldName)
+        public static object GetValueByField(EntityBase entity, String fieldName)
         {
             Type type = entity.GetType();
             PropertyInfo info = type.GetProperty(fieldName);
@@ -222,32 +300,195 @@ namespace NDolls.Data.Util
         }
 
         /// <summary>
+        /// 设置对象某属性的值
+        /// </summary>
+        /// <param name="entity">对象</param>
+        /// <param name="fieldName">属性名</param>
+        /// <param name="fieldValue">属性需要设置的值</param>
+        /// <returns>该对象属性对应的值</returns>
+        public static void SetValueByField(EntityBase entity, String fieldName,Object fieldValue)
+        {
+            Type type = entity.GetType();
+            PropertyInfo info = type.GetProperty(fieldName);
+            if (info != null)
+            {
+                info.SetValue(entity, fieldValue, null);
+            }
+        }
+
+        /// <summary>
+        /// 获取类静态属性值
+        /// </summary>
+        /// <param name="assembleName">程序集名称</param>
+        /// <param name="clsName">类FullName</param>
+        /// <param name="clsProperty">属性名称</param>
+        /// <returns>静态属性值</returns>
+        public static object GetValueByType(String assembleName, String clsName, String clsProperty)
+        {
+            PropertyInfo pi;
+            if (!String.IsNullOrEmpty(assembleName))
+            {
+                Assembly a = Assembly.Load(assembleName);
+                pi = a.CreateInstance(clsName).GetType().GetProperty(clsProperty);
+            }
+            else
+            {
+                pi = Type.GetType(clsName).GetProperty(clsProperty);
+            }
+            
+            return pi.GetValue(null, null).ToString(); 
+        }
+
+        /// <summary>
+        /// 获取方法
+        /// </summary>
+        /// <param name="assembleName">程序集名称</param>
+        /// <param name="clsName">类FullName</param>
+        /// <param name="methodName">方法名称</param>
+        /// <returns>方法对象</returns>
+        public static MethodInfo GetMethod(String assembleName, String clsName, String methodName)
+        {
+            Assembly assembly = Assembly.Load(assembleName);
+            Type type = assembly.GetType(clsName);
+            MethodInfo method = type.GetMethod(methodName);
+
+            return method;
+        }
+
+        /// <summary>
+        /// 获取类静态属性值
+        /// </summary>
+        /// <param name="assembleName">程序集名称</param>
+        /// <param name="fullPropertyName">包含类路径的属性名</param>
+        /// <returns>静态属性值</returns>
+        public static object GetValueByType(String assembleName,String fullPropertyName)
+        {
+            String clsName = fullPropertyName.Substring(0, fullPropertyName.LastIndexOf('.'));
+            String clsProperty = fullPropertyName.Substring(fullPropertyName.LastIndexOf('.') + 1);
+            return GetValueByType(assembleName, clsName, clsProperty);
+        }
+
+        /// <summary>
+        /// 获取某字段所属的特性集合
+        /// </summary>
+        /// <typeparam name="T">特性类型</typeparam>
+        /// <param name="entity">实体对象</param>
+        /// <param name="fieldName">对象字段</param>
+        /// <returns>特性集合</returns>
+        public static object[] GetAttributesByField<T>(EntityBase entity, String fieldName)
+        {
+            Type type = entity.GetType();
+            PropertyInfo info = type.GetProperty(fieldName);
+            if (info != null)
+            {
+                return info.GetCustomAttributes(typeof(T), false);
+            }
+            else
+                return null;
+        }
+
+        /// <summary>
         /// 为主对象的关联对象赋值
         /// </summary>
         /// <param name="model">要赋值的主对象</param>
         public static void SetAssociation(Object model)
         {
+            if (!NDolls.Data.DataConfig.AllowAssociation)//若未开启级联查询，返回
+            {
+                return;
+            }
+
             Type type = model.GetType();
             Fields fields = GetFieldsByType(type);
 
             PropertyInfo info;
+            Type refType;
             foreach (AssociationAttribute aField in fields.AssociationFields)
             {
                 if (aField.CasType != CascadeType.ALL && aField.CasType != CascadeType.SELECT && aField.CasType != CascadeType.UNDELETE)
                     continue;
 
                 info = type.GetProperty(aField.FieldName);
-                dynamic repository = RepositoryFactory<EntityBase>.CreateRepository(info.PropertyType.GetGenericArguments()[0]);//此处泛型T无实际作用
+                if (aField.AssType == AssociationType.Association)//关联关系
+                {
+                    refType = info.PropertyType;
+                }
+                else//组合或聚合关系
+                {
+                    refType = info.PropertyType.GetGenericArguments()[0];
+                }
+
+                dynamic repository = RepositoryFactory<EntityBase>.CreateRepository(refType);//此处泛型T无实际作用
+                String[] curFields = aField.CurField.Split(',');//主对象字段名集合
+                String[] vals = new String[curFields.Length];
+                for (int i = 0; i < curFields.Length; i++)
+                {
+                    try
+                    {
+                        vals[i] = type.GetProperty(curFields[i]).GetValue(model, null).ToString();
+                    }
+                    catch 
+                    {}
+                }
+
                 switch (aField.AssType)
                 {
-                    case AssociationType.Association://关联关系
-                        info.SetValue(model,repository.FindByPK(type.GetProperty(aField.RefField).GetValue(model,null).ToString()),null);
+                    case AssociationType.Association://关联关系(1vs1)
+                        info.SetValue(model, repository.FindByPK(vals), null);
                         break;
                     case AssociationType.Aggregation://聚合关系
                     case AssociationType.Composition://组合关系
-                        dynamic list =
-                            repository.FindByCondition(new List<Item> { new ConditionItem(aField.RefField, GetValueByField((EntityBase)model, aField.RefField), SearchType.Accurate) });                        
-                        info.SetValue(model,list, null);
+                        String[] objFields = aField.ObjField.Split(',');//目标对象字段名集合
+                        List<Item> conditions = new List<Item>();
+                        for (int i = 0; i < objFields.Length; i++)
+                        {
+                            if (!String.IsNullOrEmpty(objFields[i]))
+                            {
+                                conditions.Add(new ConditionItem(objFields[i], vals[i], SearchType.Accurate));
+                            }
+                        }
+
+                        //加载特殊查询项（条件项）
+                        object[] objs = GetAttributesByField<AssocConditionAttribute>(model as EntityBase, aField.FieldName);
+                        if (objs != null && objs.Length > 0)
+                        {
+                            foreach (AssocConditionAttribute obj in objs)
+                            {
+                                //匹配变量替换
+                                String pattern = @"[\{（][\s\S]*[\}）]";
+
+                                List<string> mlist = Regex.Matches(obj.FieldName, pattern).Cast<Match>().Select(a => a.Value).ToList();
+                                foreach (String v in mlist)
+                                {
+                                    LoadVars(obj, (EntityBase)model, v, true);
+                                }
+
+                                if (obj.FieldValue != null)
+                                {
+                                    mlist = Regex.Matches(obj.FieldValue.ToString(), pattern).Cast<Match>().Select(a => a.Value).ToList();
+                                    foreach (String v in mlist)
+                                    {
+                                        LoadVars(obj, (EntityBase)model, v, false);
+                                    }
+                                }
+
+                                conditions.Add(new ConditionItem(obj.FieldName, obj.FieldValue, obj.SearchType));
+                            }
+                        }
+
+                        //加载特殊查询项（排序项）
+                        objs = GetAttributesByField<AssocOrderAttribute>(model as EntityBase, aField.FieldName);
+                        if (objs != null && objs.Length > 0)
+                        {
+                            foreach (AssocOrderAttribute obj in objs)
+                            {
+                                conditions.Add(new OrderItem(obj.FieldName, obj.OrderType));
+                            }
+                        }
+
+                        dynamic list = aField.Top <= 0 ?
+                            repository.FindByCondition(conditions) : repository.FindByCondition(aField.Top, conditions);
+                        info.SetValue(model, list, null);
                         break;
                     default:
                         break;
@@ -255,72 +496,46 @@ namespace NDolls.Data.Util
             }
         }
 
-        /// <summary>
-        /// 持久化主对象及其的关联对象信息
-        /// </summary>
-        /// <param name="model">操作主对象</param>
-        /// <param name="filedName">关联对象集合</param>
-        public static bool Persist(OptEntity model,List<AssociationAttribute> associations)
+        private static void LoadVars(AssocConditionAttribute obj, EntityBase model, String val,Boolean isFieldName)
         {
-            Type type = model.Entity.GetType();
-            PropertyInfo info;
-            dynamic obj;
-            dynamic repository;
-            OptType optType = OptType.Save;
-
-            List<OptEntity> entities = new List<OptEntity>();//实体对象集合
-            entities.Add(model);//加入主对象
-
-            foreach (AssociationAttribute item in associations)
+            String[] pars = val.Trim(new char[] { '{', '}' }).Split(',');
+            String vv = "";
+            if (isFieldName)
             {
-                info = type.GetProperty(item.FieldName);
-                repository =
-                    RepositoryFactory<EntityBase>.CreateRepository(info.PropertyType.GetGenericArguments()[0]);//此处泛型T无实际作用
-
-                obj = info.GetValue(model.Entity, null);
-                if (obj == null)
-                    continue;
-
-                switch (item.AssType)
-                {
-                    case AssociationType.Association://关联关系
-                        //控制级联类别
-                        if (item.CasType == CascadeType.SAVE || item.CasType == CascadeType.UNDELETE || item.CasType == CascadeType.ALL)
-                        {
-                            if (repository.Exist(obj))
-                                optType = OptType.Update;
-                            else
-                                optType = OptType.Create;
-                        }
-                        else if (item.CasType == CascadeType.UPDATE)
-                            optType = OptType.Update;
-
-                        entities.Add(new OptEntity(obj, optType));
-                        break;
-                    case AssociationType.Aggregation://聚合关系
-                    case AssociationType.Composition://组合关系
-                        foreach (dynamic entity in obj)
-                        {
-                            //控制级联类别
-                            if (item.CasType == CascadeType.SAVE || item.CasType == CascadeType.UNDELETE || item.CasType == CascadeType.ALL)
-                            {
-                                if (repository.Exist(entity))
-                                    optType = OptType.Update;
-                                else
-                                    optType = OptType.Create;
-                            }
-                            else if (item.CasType == CascadeType.UPDATE)
-                                optType = OptType.Update;
-
-                            entities.Add(new OptEntity(entity, optType));
-                        }
-                        break;
-                }
-                
+                vv = obj.FieldName;
+            }
+            else
+            {
+                vv = obj.FieldValue.ToString();
             }
 
-            DBTransaction tran = new DBTransaction(entities);//此处需改进支持多数据库
-            return tran.Excute();
+            if (pars.Length == 1)
+            {
+                if (pars[0].Contains("."))//系统全局静态变量，如{System.DateTime.Now}
+                {
+                    vv = vv.Replace(val, GetValueByField(pars[0].Substring(0, pars[0].LastIndexOf('.')),
+                        pars[0].Substring(pars[0].LastIndexOf('.') + 1)).ToString());
+                }
+                else//{FieldName}:当前主对象字段值替换
+                {
+                    vv = vv.Replace(val,
+                        GetValueByField((EntityBase)model, pars[0]).ToString());
+                }
+            }
+            else//{Assembly,Assembly.FieldName}:全局静态变量替换
+            {
+                vv = vv.Replace(val,
+                    NDolls.Data.Util.EntityUtil.GetValueByType(pars[0], pars[1]).ToString());
+            }
+
+            if (isFieldName)
+            {
+                obj.FieldName = vv;
+            }
+            else
+            {
+                obj.FieldValue = vv;
+            }
         }
 
     }

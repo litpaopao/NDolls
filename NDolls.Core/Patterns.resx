@@ -178,7 +178,7 @@
     <comment>正浮点数</comment>
   </data>
   <data name="PositiveInt" xml:space="preserve">
-    <value>^[1-9]\d*$</value>
+    <value>^[0-9]*[1-9][0-9]*$</value>
     <comment>正整数</comment>
   </data>
   <data name="Postcode" xml:space="preserve">
@@ -196,5 +196,21 @@
   <data name="URL" xml:space="preserve">
     <value>http(s)?://([\w-]+\.)+[\w-]+(/[\w- ./?%&amp;=]*)?</value>
     <comment>网址</comment>
+  </data>
+  <data name="Number" xml:space="preserve">
+    <value>^[+-]?([0-9]*\.?[0-9]+|[0-9]+\.?[0-9]*)([eE][+-]?[0-9]+)?$</value>
+    <comment>整数或小数</comment>
+  </data>
+  <data name="PositiveNumber" xml:space="preserve">
+    <value>^(?:[1-9]\d*|0)(?:\.\d+)?$</value>
+    <comment>正数(整数或浮点数)</comment>
+  </data>
+  <data name="NonNegativeInt" xml:space="preserve">
+    <value>^[1-9]\d*|0$</value>
+    <comment>非负整数</comment>
+  </data>
+  <data name="NonPositiveInt" xml:space="preserve">
+    <value>^-[1-9]\d*|0$</value>
+    <comment>非正整数</comment>
   </data>
 </root>
